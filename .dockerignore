@@ -1,0 +1,36 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.venv
+venv
+env
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Scripts chỉ dùng local (Windows)
+run.bat
+run.ps1
+start.bat
+start.ps1
+check_service.py
+
+# Docs
+README.md
+QUICK_START.md
+*.md
+!trained_models/README.md
