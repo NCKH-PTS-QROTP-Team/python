@@ -346,3 +346,31 @@ def encode_image_to_base64(img: np.ndarray) -> str:
     _, buffer = cv2.imencode('.jpg', img)
     img_bytes = buffer.tobytes()
     return base64.b64encode(img_bytes).decode('utf-8')
+
+def detect_faces(img: np.ndarray, max_num: int = 1):
+    """Detect faces using SCRFD model (if available) or OpenCV Haar Cascade
+    Logic giống app.py line 424-427: gọi trực tiếp scrfd.detect() với lock
+    """
+    if scrfd is not None:
+        # Dùng SCRFD - giống app.py (line 424-427)
+        with detection_lock:
+            bboxes, kpss = scrfd.detect(img, max_num=max_num)
+        return bboxes, kpss
+    else:
+        # Fallback: Dùng OpenCV Haar Cascade
+        if opencv_cascade is None:
+            raise RuntimeError("No face detector available. Install insightface or ensure OpenCV is available.")
+        
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+        faces = opencv_cascade.detectMultiScale(gray, 1.1, 4)
+        
+        if len(faces) == 0:
+            return np.array([]), None
+        
+        # Convert to SCRFD format: [x1, y1, x2, y2, conf]
+        bboxes = []
+        for (x, y, w, h) in faces:
+            bboxes.append([x, y, x+w, y+h, 0.9])  # conf = 0.9
+        
+        bboxes = np.array(bboxes[:max_num])
+        return bboxes, None  # Haar Cascade không có landmarks
