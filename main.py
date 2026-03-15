@@ -374,3 +374,49 @@ def detect_faces(img: np.ndarray, max_num: int = 1):
         
         bboxes = np.array(bboxes[:max_num])
         return bboxes, None  # Haar Cascade không có landmarks
+
+def embed_aligned112(img112_bgr: np.ndarray) -> np.ndarray:
+    """
+    Extract embedding từ aligned 112x112 face image (logic từ app.py)
+    """
+    if rec_model is None:
+        raise RuntimeError("Recognition model (ArcFace) is not loaded")
+    
+    # Đảm bảo là BGR và đúng kích thước
+    if img112_bgr.ndim == 2:
+        img112_bgr = cv2.cvtColor(img112_bgr, cv2.COLOR_GRAY2BGR)
+    if img112_bgr.shape[:2] != (112, 112):
+        img112_bgr = cv2.resize(img112_bgr, (112, 112), interpolation=cv2.INTER_AREA)
+    
+    with recognition_lock:
+        feat = rec_model.get_feat(img112_bgr)
+    return l2_normalize(feat)
+
+def extract_face_embedding(img: np.ndarray, kps: np.ndarray, use_enhancement: bool = False) -> np.ndarray:
+    """
+    Extract face embedding using ArcFace model (logic từ app.py).
+    
+    Args:
+        img: BGR image
+        kps: Face landmarks (5 points)
+        use_enhancement: Nếu True, sẽ enhance face trước khi extract (tốt hơn)
+    
+    Returns:
+        Normalized embedding vector
+    """
+    if rec_model is None:
+        raise RuntimeError("Recognition model (ArcFace) is not loaded")
+    
+    # Align face về 112x112 (logic từ app.py)
+    aligned = face_align.norm_crop(img, landmark=kps, image_size=112)
+    
+    # Enhance face nếu cần (logic từ app.py - tốt hơn)
+    if use_enhancement:
+        aligned, _ = enhance_face_auto(aligned)
+    
+    # Extract embedding
+    return embed_aligned112(aligned)
+
+def cosine_similarity(emb1: np.ndarray, emb2: np.ndarray) -> float:
+    """Calculate cosine similarity between two embeddings"""
+    return float(np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2)))
