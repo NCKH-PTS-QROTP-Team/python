@@ -416,7 +416,3 @@ def extract_face_embedding(img: np.ndarray, kps: np.ndarray, use_enhancement: bo
     
     # Extract embedding
     return embed_aligned112(aligned)
-
-def cosine_similarity(emb1: np.ndarray, emb2: np.ndarray) -> float:
-    """Calculate cosine similarity between two embeddings"""
-    return float(np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2)))
