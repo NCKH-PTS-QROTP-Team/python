@@ -420,3 +420,110 @@ def extract_face_embedding(img: np.ndarray, kps: np.ndarray, use_enhancement: bo
 def cosine_similarity(emb1: np.ndarray, emb2: np.ndarray) -> float:
     """Calculate cosine similarity between two embeddings"""
     return float(np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2)))
+
+# ========== FACE ENHANCEMENT (từ app.py) ==========
+def enhance_face_auto(
+    face_bgr,
+    denoise_strength=8,         # 5–10: khử noise nhẹ
+    clahe_clip=2.0, clahe_grid=8,
+    usm_sigma=1.2,              # radius sharpen
+    amount_min=0.4, amount_max=1.8,
+    low_thr=15.0, high_thr=80.0,
+    gamma_corr=True
+):
+    """
+    Smart enhancer:
+    1️⃣  Bilateral denoise giữ chi tiết
+    2️⃣  Auto exposure (gamma correction)
+    3️⃣  CLAHE + Unsharp Mask (adaptive amount)
+    """
+    # --- Step 1: Denoise nhẹ (Bilateral) ---
+    img_dn = cv2.bilateralFilter(face_bgr, d=0,
+                                 sigmaColor=denoise_strength,
+                                 sigmaSpace=denoise_strength)
+
+    # --- Step 2: Auto exposure (Gamma correction) ---
+    if gamma_corr:
+        ycc = cv2.cvtColor(img_dn, cv2.COLOR_BGR2YCrCb)
+        y = ycc[:, :, 0]
+        meanY = np.mean(y)
+        gamma = np.interp(meanY, [50, 180], [1.4, 0.7])  # tối -> tăng sáng
+        gamma = np.clip(gamma, 0.8, 1.4)
+        table = np.array([(i / 255.0) ** (1.0 / gamma) * 255
+                          for i in np.arange(256)]).astype("uint8")
+        img_gamma = cv2.LUT(img_dn, table)
+    else:
+        img_gamma = img_dn
+
+    # --- Step 3: CLAHE + Unsharp Mask ---
+    ycc = cv2.cvtColor(img_gamma, cv2.COLOR_BGR2YCrCb)
+    y = ycc[:, :, 0]
+    lapv0 = cv2.Laplacian(y, cv2.CV_64F).var()
+
+    clahe = cv2.createCLAHE(clipLimit=clahe_clip,
+                            tileGridSize=(clahe_grid, clahe_grid))
+    y_eq = clahe.apply(y)
+
+    amount = np.interp(lapv0, [low_thr, high_thr],
+                       [amount_max, amount_min])
+    amount = float(np.clip(amount, amount_min, amount_max))
+
+    blur = cv2.GaussianBlur(y_eq, (0, 0), usm_sigma)
+    detail = cv2.subtract(y_eq, blur)
+    y_sharp = cv2.addWeighted(y_eq, 1.0, detail, amount, 0)
+
+    ycc[:, :, 0] = np.clip(y_sharp, 0, 255).astype(np.uint8)
+    sharp_bgr = cv2.cvtColor(ycc, cv2.COLOR_YCrCb2BGR)
+
+    # --- Thống kê debug ---
+    y2 = cv2.cvtColor(sharp_bgr, cv2.COLOR_BGR2YCrCb)[:, :, 0]
+    lapv1 = cv2.Laplacian(y2, cv2.CV_64F).var()
+    meanY2 = np.mean(y2)
+    meta = {
+        "lapv_before": float(lapv0),
+        "lapv_after": float(lapv1),
+        "amount": amount,
+        "gamma": gamma if gamma_corr else 1.0,
+        "meanY": float(meanY),
+        "meanY_after": float(meanY2)
+    }
+    return sharp_bgr, meta
+
+def improved_lap_var(face_bgr):
+    """Improved blur detection using Y channel with Gaussian blur"""
+    y = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2YCrCb)[:,:,0]
+    y = cv2.GaussianBlur(y, (3,3), 0)
+    lapv = cv2.Laplacian(y, cv2.CV_64F).var()
+    return lapv
+
+def preprocess_anti_spoof(face_bgr: np.ndarray, size=(80, 80)) -> np.ndarray:
+    """Preprocess face crop for anti-spoof model"""
+    img_rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB)
+    img_rgb = cv2.resize(img_rgb, size, interpolation=cv2.INTER_LINEAR)
+    x = img_rgb.astype(np.float32)
+    x = np.transpose(x, (2, 0, 1))  # CHW
+    x = np.ascontiguousarray(x)[None, ...]  # NCHW
+    return x
+
+def check_liveness(face_bgr: np.ndarray, use_enhancement: bool = True) -> float:
+    """
+    Check liveness using anti-spoof model. Returns real probability [0,1]
+    Nếu use_enhancement=True, sẽ enhance ảnh trước khi check (tốt hơn)
+    """
+    if anti_sess is None:
+        return 1.0  # If model not loaded, assume real
+    
+    # Enhance face trước khi check (logic từ app.py - tốt hơn)
+    if use_enhancement:
+        face_enhanced, _ = enhance_face_auto(face_bgr)
+    else:
+        face_enhanced = face_bgr
+    
+    x = preprocess_anti_spoof(face_enhanced, (80, 80))
+    with anti_spoof_lock:
+        logits = anti_sess.run(["logits"], {"input": x})[0]  # [1, C]
+    e = np.exp(logits - logits.max(axis=1, keepdims=True))
+    probs = (e / e.sum(axis=1, keepdims=True))[0]  # (C,)
+    # Index 1 = real, 0 = print, 2 = replay
+    real_prob = float(probs[1])
+    return real_prob
