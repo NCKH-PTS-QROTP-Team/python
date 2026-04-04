@@ -495,35 +495,3 @@ def improved_lap_var(face_bgr):
     y = cv2.GaussianBlur(y, (3,3), 0)
     lapv = cv2.Laplacian(y, cv2.CV_64F).var()
     return lapv
-
-def preprocess_anti_spoof(face_bgr: np.ndarray, size=(80, 80)) -> np.ndarray:
-    """Preprocess face crop for anti-spoof model"""
-    img_rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB)
-    img_rgb = cv2.resize(img_rgb, size, interpolation=cv2.INTER_LINEAR)
-    x = img_rgb.astype(np.float32)
-    x = np.transpose(x, (2, 0, 1))  # CHW
-    x = np.ascontiguousarray(x)[None, ...]  # NCHW
-    return x
-
-def check_liveness(face_bgr: np.ndarray, use_enhancement: bool = True) -> float:
-    """
-    Check liveness using anti-spoof model. Returns real probability [0,1]
-    Nếu use_enhancement=True, sẽ enhance ảnh trước khi check (tốt hơn)
-    """
-    if anti_sess is None:
-        return 1.0  # If model not loaded, assume real
-    
-    # Enhance face trước khi check (logic từ app.py - tốt hơn)
-    if use_enhancement:
-        face_enhanced, _ = enhance_face_auto(face_bgr)
-    else:
-        face_enhanced = face_bgr
-    
-    x = preprocess_anti_spoof(face_enhanced, (80, 80))
-    with anti_spoof_lock:
-        logits = anti_sess.run(["logits"], {"input": x})[0]  # [1, C]
-    e = np.exp(logits - logits.max(axis=1, keepdims=True))
-    probs = (e / e.sum(axis=1, keepdims=True))[0]  # (C,)
-    # Index 1 = real, 0 = print, 2 = replay
-    real_prob = float(probs[1])
-    return real_prob
