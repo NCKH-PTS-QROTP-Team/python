@@ -454,3 +454,18 @@ def enhance_face_auto(
         img_gamma = cv2.LUT(img_dn, table)
     else:
         img_gamma = img_dn
+
+    # --- Step 3: CLAHE + Unsharp Mask ---
+    ycc = cv2.cvtColor(img_gamma, cv2.COLOR_BGR2YCrCb)
+    y = ycc[:, :, 0]
+    lapv0 = cv2.Laplacian(y, cv2.CV_64F).var()
+
+    clahe = cv2.createCLAHE(clipLimit=clahe_clip,
+                            tileGridSize=(clahe_grid, clahe_grid))
+    y_eq = clahe.apply(y)
+
+    amount = np.interp(lapv0, [low_thr, high_thr],
+                       [amount_max, amount_min])
+    amount = float(np.clip(amount, amount_min, amount_max))
+
+    blur = cv2.GaussianBlur(y_eq, (0, 0), usm_sigma)
