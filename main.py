@@ -469,3 +469,22 @@ def enhance_face_auto(
     amount = float(np.clip(amount, amount_min, amount_max))
 
     blur = cv2.GaussianBlur(y_eq, (0, 0), usm_sigma)
+    detail = cv2.subtract(y_eq, blur)
+    y_sharp = cv2.addWeighted(y_eq, 1.0, detail, amount, 0)
+
+    ycc[:, :, 0] = np.clip(y_sharp, 0, 255).astype(np.uint8)
+    sharp_bgr = cv2.cvtColor(ycc, cv2.COLOR_YCrCb2BGR)
+
+    # --- Thống kê debug ---
+    y2 = cv2.cvtColor(sharp_bgr, cv2.COLOR_BGR2YCrCb)[:, :, 0]
+    lapv1 = cv2.Laplacian(y2, cv2.CV_64F).var()
+    meanY2 = np.mean(y2)
+    meta = {
+        "lapv_before": float(lapv0),
+        "lapv_after": float(lapv1),
+        "amount": amount,
+        "gamma": gamma if gamma_corr else 1.0,
+        "meanY": float(meanY),
+        "meanY_after": float(meanY2)
+    }
+    return sharp_bgr, meta
