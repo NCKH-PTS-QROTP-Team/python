@@ -488,3 +488,10 @@ def enhance_face_auto(
         "meanY_after": float(meanY2)
     }
     return sharp_bgr, meta
+
+def improved_lap_var(face_bgr):
+    """Improved blur detection using Y channel with Gaussian blur"""
+    y = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2YCrCb)[:,:,0]
+    y = cv2.GaussianBlur(y, (3,3), 0)
+    lapv = cv2.Laplacian(y, cv2.CV_64F).var()
+    return lapv
