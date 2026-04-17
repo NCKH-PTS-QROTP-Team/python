@@ -561,3 +561,65 @@ class AntiSpoofResponse(BaseModel):
     success: bool
     message: str
     data: Optional[dict] = None
+
+# ========== API ENDPOINTS ==========
+@app.get("/")
+def root():
+    return {
+        "service": "Face Recognition Service",
+        "version": "1.0.0",
+        "status": "running",
+        "models": {
+            "detection": "SCRFD (det_10g.onnx)",
+            "recognition": "ArcFace (w600k_r50.onnx)",
+            "anti_spoof": "MiniFASNet (antispoof_80x80.onnx)" if anti_sess else None
+        }
+    }
+
+@app.post("/api/detect", response_model=DetectResponse)
+def detect_faces_endpoint(request: DetectRequest):
+    """Detect faces in image. Returns bounding boxes and landmarks."""
+    try:
+        img = decode_base64_image(request.base64Image)
+        bboxes, kpss = detect_faces(img, max_num=1)
+        
+        if len(bboxes) == 0:
+            return DetectResponse(
+                success=False,
+                message="Không tìm thấy khuôn mặt trong ảnh"
+            )
+        
+        # Get best face (highest confidence)
+        bbox = bboxes[0]
+        x1, y1, x2, y2, conf = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]), float(bbox[4])
+        
+        # Draw bounding box on image
+        img_annotated = img.copy()
+        cv2.rectangle(img_annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        processed_image_base64 = encode_image_to_base64(img_annotated)
+        
+        landmarks = None
+        if kpss is not None and len(kpss) > 0:
+            landmarks = kpss[0].tolist()
+        
+        h, w = img.shape[:2]
+        return DetectResponse(
+            success=True,
+            message="Phát hiện khuôn mặt thành công",
+            data={
+                "faceCount": 1,
+                "bbox": {
+                    "x": x1,
+                    "y": y1,
+                    "width": x2 - x1,
+                    "height": y2 - y1
+                },
+                "confidence": conf,
+                "landmarks": landmarks,
+                "processedImageBase64": processed_image_base64,
+                "imageWidth": w,
+                "imageHeight": h
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi detect face: {str(e)}")
