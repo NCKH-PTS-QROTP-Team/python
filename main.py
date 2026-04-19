@@ -623,3 +623,82 @@ def detect_faces_endpoint(request: DetectRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi detect face: {str(e)}")
+
+@app.post("/api/extract-encoding", response_model=ExtractEncodingResponse)
+def extract_encoding_endpoint(request: ExtractEncodingRequest):
+    """Extract face encoding from image. Used for registration."""
+    try:
+        print(f"[DEBUG] Extract encoding request received, base64 length: {len(request.base64Image) if request.base64Image else 0}")
+        
+        if not INSIGHTFACE_AVAILABLE or rec_model is None:
+            print("[ERROR] Recognition model not available")
+            return ExtractEncodingResponse(
+                success=False,
+                message="Recognition model (ArcFace) không khả dụng. Cần cài insightface để sử dụng tính năng này."
+            )
+        
+        print("[DEBUG] Decoding base64 image...")
+        img = decode_base64_image(request.base64Image)
+        print(f"[DEBUG] Image decoded: shape={img.shape}")
+        
+        print("[DEBUG] Detecting faces...")
+        print(f"[DEBUG] Image shape before detection: {img.shape}")
+        try:
+            bboxes, kpss = detect_faces(img, max_num=1)
+            print(f"[DEBUG] Detected {len(bboxes)} face(s), landmarks: {len(kpss) if kpss is not None else 0}")
+        except Exception as detect_error:
+            print(f"[ERROR] Face detection failed: {type(detect_error).__name__}: {detect_error}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Lỗi detect face: {str(detect_error)}")
+        
+        if len(bboxes) == 0:
+            return ExtractEncodingResponse(
+                success=False,
+                message="Không tìm thấy khuôn mặt trong ảnh"
+            )
+        
+        if kpss is None or len(kpss) == 0:
+            return ExtractEncodingResponse(
+                success=False,
+                message="Không tìm thấy landmarks khuôn mặt"
+            )
+        
+        print("[DEBUG] Extracting face embedding...")
+        # Extract embedding với enhancement (logic từ app.py - tốt hơn)
+        kps = kpss[0]
+        embedding = extract_face_embedding(img, kps, use_enhancement=True)
+        print(f"[DEBUG] Embedding extracted: shape={embedding.shape}")
+        
+        # Flatten embedding nếu là nested array (shape (1, 512) -> (512,))
+        if embedding.ndim > 1:
+            embedding = embedding.flatten()
+        print(f"[DEBUG] Embedding after flatten: shape={embedding.shape}")
+        
+        # Crop face for visualization
+        bbox = bboxes[0]
+        x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+        face_crop = img[y1:y2, x1:x2]
+        processed_image_base64 = encode_image_to_base64(face_crop)
+        
+        print("[DEBUG] Extract encoding successful")
+        return ExtractEncodingResponse(
+            success=True,
+            message="Trích xuất face encoding thành công",
+            data={
+                "faceEncoding": embedding.tolist(),  # Convert to flat list for JSON
+                "processedImageBase64": processed_image_base64,
+                "bbox": {
+                    "x": x1,
+                    "y": y1,
+                    "width": x2 - x1,
+                    "height": y2 - y1
+                }
+            }
+        )
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"[ERROR] Extract encoding failed: {str(e)}")
+        print(f"[ERROR] Traceback: {error_trace}")
+        raise HTTPException(status_code=500, detail=f"Lỗi extract encoding: {str(e)}")
