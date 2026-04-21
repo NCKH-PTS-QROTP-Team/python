@@ -702,3 +702,95 @@ def extract_encoding_endpoint(request: ExtractEncodingRequest):
         print(f"[ERROR] Extract encoding failed: {str(e)}")
         print(f"[ERROR] Traceback: {error_trace}")
         raise HTTPException(status_code=500, detail=f"Lỗi extract encoding: {str(e)}")
+
+@app.post("/api/verify", response_model=VerifyResponse)
+def verify_face_endpoint(request: VerifyRequest):
+    """Verify face by comparing with registered encoding."""
+    try:
+        if not INSIGHTFACE_AVAILABLE or rec_model is None:
+            return VerifyResponse(
+                success=False,
+                message="Recognition model (ArcFace) không khả dụng. Cần cài insightface để sử dụng tính năng này."
+            )
+        img = decode_base64_image(request.base64Image)
+        bboxes, kpss = detect_faces(img, max_num=1)
+        
+        if len(bboxes) == 0:
+            return VerifyResponse(
+                success=False,
+                message="Không tìm thấy khuôn mặt trong ảnh"
+            )
+        
+        if kpss is None or len(kpss) == 0:
+            return VerifyResponse(
+                success=False,
+                message="Không tìm thấy landmarks khuôn mặt"
+            )
+        
+        # Crop face với pad (logic từ app.py)
+        bbox = bboxes[0]
+        x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+        pad = 50
+        h, w = img.shape[:2]
+        x1p = max(0, x1 - pad)
+        y1p = max(0, y1 - pad)
+        x2p = min(w, x2 + pad)
+        y2p = min(h, y2 + pad)
+        face_crop = img[y1p:y2p, x1p:x2p]
+        
+        # Quality gate: Kiểm tra kích thước và độ nét
+        min_side = min(face_crop.shape[:2]) if face_crop.size else 0
+        if min_side < MIN_FACE_SIZE:
+            return VerifyResponse(
+                success=False,
+                message=f"Khuôn mặt quá nhỏ ({min_side}px < {MIN_FACE_SIZE}px)",
+                data={
+                    "isMatch": False,
+                    "similarity": 0.0,
+                    "threshold": VERIFY_THRESHOLD,
+                    "message": f"Khuôn mặt quá nhỏ ({min_side}px < {MIN_FACE_SIZE}px)"
+                }
+            )
+        
+        lapv = improved_lap_var(face_crop)
+        if lapv < BLUR_VAR_THR:
+            return VerifyResponse(
+                success=False,
+                message=f"Ảnh quá mờ (LapVar {lapv:.2f} < {BLUR_VAR_THR})",
+                data={
+                    "isMatch": False,
+                    "similarity": 0.0,
+                    "threshold": VERIFY_THRESHOLD,
+                    "message": f"Ảnh quá mờ (LapVar {lapv:.2f} < {BLUR_VAR_THR})"
+                }
+            )
+        
+        # Extract embedding với enhancement (logic từ app.py - tốt hơn)
+        kps = kpss[0]
+        current_embedding = extract_face_embedding(img, kps, use_enhancement=True)
+        
+        # Normalize registered encoding trước khi so sánh
+        registered_emb = np.array(request.registeredEncoding, dtype=np.float32)
+        registered_emb = l2_normalize(registered_emb)  # Đảm bảo normalized
+        
+        # Compare với cosine similarity (logic từ app.py)
+        similarity = cosine_similarity(current_embedding, registered_emb)
+        
+        is_match = similarity >= VERIFY_THRESHOLD
+        
+        return VerifyResponse(
+            success=True,
+            message="Xác thực thành công" if is_match else "Face không khớp",
+            data={
+                "isMatch": is_match,
+                "similarity": similarity,
+                "threshold": VERIFY_THRESHOLD,
+                "message": (
+                    f"Xác thực thành công! Độ tương đồng: {similarity*100:.2f}%"
+                    if is_match
+                    else f"Face không khớp. Độ tương đồng: {similarity*100:.2f}% (yêu cầu: {VERIFY_THRESHOLD*100:.0f}%)"
+                )
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi verify face: {str(e)}")
