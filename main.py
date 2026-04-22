@@ -794,3 +794,68 @@ def verify_face_endpoint(request: VerifyRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi verify face: {str(e)}")
+
+@app.post("/api/anti-spoof", response_model=AntiSpoofResponse)
+def anti_spoof_endpoint(request: AntiSpoofRequest):
+    """
+    Check liveness/anti-spoofing of face.
+    Sử dụng logic từ app.py: face enhancement + quality gates
+    """
+    try:
+        img = decode_base64_image(request.base64Image)
+        bboxes, kpss = detect_faces(img, max_num=1)
+        
+        if len(bboxes) == 0:
+            return AntiSpoofResponse(
+                success=False,
+                message="Không tìm thấy khuôn mặt trong ảnh"
+            )
+        
+        # Crop face với pad lớn hơn (50px như app.py)
+        bbox = bboxes[0]
+        x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+        pad = 50  # Pad lớn hơn để có context tốt hơn
+        h, w = img.shape[:2]
+        x1p = max(0, x1 - pad)
+        y1p = max(0, y1 - pad)
+        x2p = min(w, x2 + pad)
+        y2p = min(h, y2 + pad)
+        face_crop = img[y1p:y2p, x1p:x2p]
+        
+        # Quality gate 1: Kiểm tra kích thước mặt
+        min_side = min(face_crop.shape[:2]) if face_crop.size else 0
+        if min_side < MIN_FACE_SIZE:
+            return AntiSpoofResponse(
+                success=True,
+                message=f"Khuôn mặt quá nhỏ ({min_side}px < {MIN_FACE_SIZE}px)",
+                data={
+                    "isReal": False,
+                    "realScore": 0.0,
+                    "spoofScore": 1.0,
+                    "threshold": ANTI_SPOOF_THRESHOLD,
+                    "failReason": f"Face too small ({min_side}px < {MIN_FACE_SIZE}px)"
+                }
+            )
+        
+        # Quality gate 2: Kiểm tra độ nét (blur)
+        lapv = improved_lap_var(face_crop)
+        if lapv < BLUR_VAR_THR:
+            return AntiSpoofResponse(
+                success=True,
+                message=f"Ảnh quá mờ (LapVar {lapv:.2f} < {BLUR_VAR_THR})",
+                data={
+                    "isReal": False,
+                    "realScore": 0.0,
+                    "spoofScore": 1.0,
+                    "threshold": ANTI_SPOOF_THRESHOLD,
+                    "failReason": f"Image too blurry (LapVar {lapv:.2f} < {BLUR_VAR_THR})"
+                }
+            )
+        
+        # Enhance face trước khi check (logic từ app.py - tốt hơn)
+        face_enhanced, enh_meta = enhance_face_auto(face_crop)
+        print(f"[ENH] LapVar {enh_meta['lapv_before']:.1f}→{enh_meta['lapv_after']:.1f} "
+              f"gamma={enh_meta['gamma']:.2f} amount={enh_meta['amount']:.2f}")
+        
+        # Check liveness với ảnh đã enhance
+        real_prob = check_liveness(face_enhanced, use_enhancement=False)  # Đã enhance rồi
