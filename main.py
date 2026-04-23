@@ -859,3 +859,27 @@ def anti_spoof_endpoint(request: AntiSpoofRequest):
         
         # Check liveness với ảnh đã enhance
         real_prob = check_liveness(face_enhanced, use_enhancement=False)  # Đã enhance rồi
+        is_real = real_prob >= ANTI_SPOOF_THRESHOLD
+        
+        return AntiSpoofResponse(
+            success=True,
+            message="Kiểm tra liveness thành công",
+            data={
+                "isReal": is_real,
+                "realScore": real_prob,
+                "spoofScore": 1.0 - real_prob,
+                "threshold": ANTI_SPOOF_THRESHOLD,
+                "quality": {
+                    "faceSize": int(min_side),
+                    "blurScore": float(lapv),
+                    "enhanced": True
+                }
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi anti-spoof: {str(e)}")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8110)
+
