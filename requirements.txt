@@ -1,9 +1,20 @@
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
-python-multipart==0.0.9
-numpy>=1.24.0
-opencv-python>=4.8.0
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+
+# ONNX Runtime (CPU) — phải >= 1.17 để fix lỗi "executable stack" trên Linux kernel mới
+onnxruntime>=1.17.0,<2.0.0
+
+# Face Recognition
+insightface==0.7.3
+
+# NumPy < 2.0 để tương thích với insightface 0.7.3
+numpy<2.0.0,>=1.24.0
+
+# OpenCV headless (không cần GUI trên server)
+opencv-python-headless>=4.8.0
+
+# Utilities
+scipy>=1.10.0
 Pillow>=10.0.0
-pydantic>=2.0.0
-insightface>=0.7.3
-onnxruntime>=1.16.0
